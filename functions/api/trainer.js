@@ -1,9 +1,10 @@
 export async function onRequestPost(context) {
   try {
-    // 1. Obtener la clave API de Groq desde Cloudflare
+    // 1. Obtener la clave API de Groq
     const apiKey = context.env.GROQ_API_KEY;
 
     if (!apiKey) {
+      console.error("❌ ERROR: Falta GROQ_API_KEY en Cloudflare.");
       return new Response(JSON.stringify({ error: "Capacitador no configurado." }), {
         status: 500,
         headers: { "Content-Type": "application/json" },
@@ -22,8 +23,8 @@ export async function onRequestPost(context) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        // Modelos populares en Groq: "llama3-8b-8192", "llama3-70b-8192", "mixtral-8x7b-32768"
-        model: "llama3-8b-8192", 
+        // MODELO ACTUALIZADO: llama3-8b-8192 ya no existe, usamos la versión 3.1
+        model: "llama-3.1-8b-instant", 
         messages: [
           {
             role: "system",
@@ -41,8 +42,9 @@ export async function onRequestPost(context) {
     // 4. Manejo de errores de la API de Groq
     if (!response.ok) {
         const errorData = await response.text();
-        console.error("Error desde Groq:", errorData);
-        throw new Error("Error en la API de Groq");
+        // Esto imprimirá el error REAL en los logs de Cloudflare
+        console.error(`❌ Error de Groq (Status ${response.status}):`, errorData);
+        throw new Error(`Error en la API de Groq: ${response.status}`);
     }
 
     // 5. Devolver la respuesta al frontend
@@ -55,7 +57,7 @@ export async function onRequestPost(context) {
     });
 
   } catch (error) {
-    console.error("Error en el Capacitador:", error);
+    console.error("❌ Error en el bloque catch:", error.message || error);
     return new Response(JSON.stringify({ error: "El Capacitador no responde. Intenta de nuevo." }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
