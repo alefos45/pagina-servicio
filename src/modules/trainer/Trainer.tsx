@@ -84,8 +84,10 @@ export function Trainer() {
     try {
       const reply = await sendTrainerMessage(role, menu, next);
       setMessages((p) => [...p, { role: 'assistant', content: reply }]);
-    } catch {
-      setError('El Capacitador no responde. Intenta de nuevo.');
+    } catch (err: any) {
+      console.error("Error real del chat:", err);
+      // 🔥 AQUÍ ESTÁ EL CAMBIO: Mostramos el mensaje real del error
+      setError(err.message || 'El Capacitador no responde. Intenta de nuevo.');
     } finally {
       setLoading(false);
     }

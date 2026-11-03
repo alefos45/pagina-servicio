@@ -13,7 +13,6 @@ export interface MenuItemForTrainer {
   recipe: Json | null;
 }
 
-// Enviamos el menú que el cliente YA obtuvo por RPC.
 export async function sendTrainerMessage(
   role: AppRole,
   menu: MenuItemForTrainer[],
@@ -22,9 +21,16 @@ export async function sendTrainerMessage(
   const res = await fetch('/api/trainer', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role, menu, messages }), // 👈 Enviamos role, menu y el historial (messages)
+    body: JSON.stringify({ role, menu, messages }),
   });
-  const data = (await res.json()) as { reply?: string; error?: string };
-  if (!res.ok || !data.reply) throw new Error(data.error ?? 'No se pudo enviar.');
+  
+  // Añadimos 'detalle' por si el backend envía un error técnico
+  const data = (await res.json()) as { reply?: string; error?: string; detalle?: string };
+  
+  if (!res.ok || !data.reply) {
+    // Lanzamos el error detallado para que Trainer.tsx lo muestre
+    throw new Error(data.detalle || data.error || 'No se pudo enviar.');
+  }
+  
   return data.reply;
 }

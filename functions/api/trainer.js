@@ -2,53 +2,35 @@ export async function onRequestPost(context) {
   try {
     const apiKey = context.env.GROQ_API_KEY;
     if (!apiKey) {
-      return new Response(JSON.stringify({ error: "Falta configurar GROQ_API_KEY" }), { status: 500 });
+      return new Response(JSON.stringify({ error: "Falta GROQ_API_KEY en Cloudflare" }), { status: 500 });
     }
 
     const requestBody = await context.request.json();
     
-    // 1. Detectar el rol y el menú (por si el frontend los envía)
+    // Validación de los datos que llegan
     const role = requestBody.role || 'empleado';
     const menu = requestBody.menu || [];
-    
-    // 2. Preparar el arreglo de mensajes (soporta 'messages' array o 'message' string)
     let messages = requestBody.messages || [];
+    
     if (messages.length === 0 && requestBody.message) {
         messages = [{ role: "user", content: requestBody.message }];
     }
-
-    // Si no hay mensajes de ninguna forma, ponemos uno por defecto
     if (messages.length === 0) {
         messages = [{ role: "user", content: "Hola" }];
     }
 
-    // 3. Transformamos el menú (la carta) a texto para la IA
+    // Procesar la carta
     const menuText = menu.map(item => {
-      const recipeInfo = item.recipe ? "Receta disponible." : "Receta reservada a cocina.";
-      return `- Plato: ${item.name}. Descripción: ${item.description || 'No disponible'}. Alérgenos: ${item.allergens ? item.allergens.join(', ') : 'Ninguno'}. ${recipeInfo}`;
+      return `- Plato: ${item.name}. Alérgenos: ${item.allergens ? item.allergens.join(', ') : 'Ninguno'}. Receta: ${item.recipe ? 'Sí' : 'No'}`;
     }).join('\n');
 
-    // 4. El "cerebro" de la IA
-    const systemPrompt = `Eres el Capacitador IA de La Tierrita del Berriondo. 
-Tu objetivo es capacitar a los empleados y meseros.
-El rol del usuario actual es: ${role}.
+    const systemPrompt = `Eres el Capacitador IA de La Tierrita. Tu rol actual es: ${role}.\nCarta:\n${menuText}\nResponde basándote en la carta sin dar recetas si no están permitidas.`;
 
-AQUÍ TIENES LA CARTA OFICIAL CON ALÉRGENOS:
-${menuText || "No se ha cargado la carta en este momento."}
-
-REGLAS ESTRICTAS:
-1. Responde basándote ÚNICAMENTE en la carta proporcionada.
-2. Si el usuario pregunta por una receta y la carta dice "Receta reservada a cocina", DEBES negarte amablemente y decir que eso es exclusivo del personal de cocina.
-3. Si te preguntan por alérgenos, cita exactamente los que aparecen en la carta.
-4. Sé amable y directo. No vuelvas a saludar si ya están conversando.`;
-
-    // 5. Unimos el cerebro con el historial de la conversación
     const groqMessages = [
       { role: "system", content: systemPrompt },
       ...messages
     ];
 
-    // 6. Llamamos a Groq
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -56,7 +38,7 @@ REGLAS ESTRICTAS:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "openai/gpt-oss-20b",
+        model: "openai/gpt-oss-20b", // EL ÚNICO MODELO VÁLIDO
         messages: groqMessages,
         temperature: 0.5,
       }),
@@ -64,8 +46,8 @@ REGLAS ESTRICTAS:
 
     if (!response.ok) {
         const errorData = await response.text();
-        console.error("❌ Error de Groq:", errorData);
-        throw new Error(`Groq dice: ${response.status}`);
+        // Esto enviará el error de Groq directo al frontend
+        return new Response(JSON.stringify({ error: `Error Groq: ${response.status}`, detalle: errorData }), { status: 500 });
     }
 
     const data = await response.json();
@@ -75,7 +57,7 @@ REGLAS ESTRICTAS:
     });
 
   } catch (error) {
-    console.error("❌ Error en el backend:", error.message);
-    return new Response(JSON.stringify({ error: "El Capacitador no responde.", detalle: error.message }), { status: 500 });
+    // Si el backend explota por cualquier cosa, enviamos la causa exacta
+    return new Response(JSON.stringify({ error: "Fallo en el servidor", detalle: error.message }), { status: 500 });
   }
 }
