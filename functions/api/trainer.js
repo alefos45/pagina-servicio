@@ -1,21 +1,54 @@
 export async function onRequestPost(context) {
   try {
-    // 1. Obtener la clave API de Groq
     const apiKey = context.env.GROQ_API_KEY;
-
     if (!apiKey) {
-      console.error("❌ ERROR: Falta GROQ_API_KEY en Cloudflare.");
-      return new Response(JSON.stringify({ error: "Capacitador no configurado." }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(JSON.stringify({ error: "Falta configurar GROQ_API_KEY" }), { status: 500 });
     }
 
-    // 2. Obtener el mensaje del frontend
     const requestBody = await context.request.json();
-    const userMessage = requestBody.message || "Hola";
+    
+    // 1. Detectar el rol y el menú (por si el frontend los envía)
+    const role = requestBody.role || 'empleado';
+    const menu = requestBody.menu || [];
+    
+    // 2. Preparar el arreglo de mensajes (soporta 'messages' array o 'message' string)
+    let messages = requestBody.messages || [];
+    if (messages.length === 0 && requestBody.message) {
+        messages = [{ role: "user", content: requestBody.message }];
+    }
 
-    // 3. Llamar a la API de Groq
+    // Si no hay mensajes de ninguna forma, ponemos uno por defecto
+    if (messages.length === 0) {
+        messages = [{ role: "user", content: "Hola" }];
+    }
+
+    // 3. Transformamos el menú (la carta) a texto para la IA
+    const menuText = menu.map(item => {
+      const recipeInfo = item.recipe ? "Receta disponible." : "Receta reservada a cocina.";
+      return `- Plato: ${item.name}. Descripción: ${item.description || 'No disponible'}. Alérgenos: ${item.allergens ? item.allergens.join(', ') : 'Ninguno'}. ${recipeInfo}`;
+    }).join('\n');
+
+    // 4. El "cerebro" de la IA
+    const systemPrompt = `Eres el Capacitador IA de La Tierrita del Berriondo. 
+Tu objetivo es capacitar a los empleados y meseros.
+El rol del usuario actual es: ${role}.
+
+AQUÍ TIENES LA CARTA OFICIAL CON ALÉRGENOS:
+${menuText || "No se ha cargado la carta en este momento."}
+
+REGLAS ESTRICTAS:
+1. Responde basándote ÚNICAMENTE en la carta proporcionada.
+2. Si el usuario pregunta por una receta y la carta dice "Receta reservada a cocina", DEBES negarte amablemente y decir que eso es exclusivo del personal de cocina.
+3. Si te preguntan por alérgenos, cita exactamente los que aparecen en la carta.
+4. Sé amable y directo. No vuelvas a saludar si ya están conversando.`;
+
+    // 5. Unimos el cerebro con el historial de la conversación
+    const groqMessages = [
+      { role: "system", content: systemPrompt },
+      ...messages
+    ];
+
+    // 6. Llamamos a Groq
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -23,44 +56,26 @@ export async function onRequestPost(context) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        // MODELO ACTUALIZADO: llama3-8b-8192 ya no existe, usamos la versión 3.1
-        model: "openai/gpt-oss-20b", 
-        messages: [
-          {
-            role: "system",
-            content: "Eres el Capacitador IA de La Tierrita. Explicas ingredientes, alérgenos, maridajes y cómo recomendar platos de la cocina boyacense. Eres amable y profesional."
-          },
-          {
-            role: "user",
-            content: userMessage
-          }
-        ],
-        temperature: 0.7,
+        model: "openai/gpt-oss-20b",
+        messages: groqMessages,
+        temperature: 0.5,
       }),
     });
 
-    // 4. Manejo de errores de la API de Groq
     if (!response.ok) {
         const errorData = await response.text();
-        // Esto imprimirá el error REAL en los logs de Cloudflare
-        console.error(`❌ Error de Groq (Status ${response.status}):`, errorData);
-        throw new Error(`Error en la API de Groq: ${response.status}`);
+        console.error("❌ Error de Groq:", errorData);
+        throw new Error(`Groq dice: ${response.status}`);
     }
 
-    // 5. Devolver la respuesta al frontend
     const data = await response.json();
-    const botReply = data.choices[0].message.content;
-
-    return new Response(JSON.stringify({ reply: botReply }), {
+    return new Response(JSON.stringify({ reply: data.choices[0].message.content }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
 
   } catch (error) {
-    console.error("❌ Error en el bloque catch:", error.message || error);
-    return new Response(JSON.stringify({ error: "El Capacitador no responde. Intenta de nuevo." }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    console.error("❌ Error en el backend:", error.message);
+    return new Response(JSON.stringify({ error: "El Capacitador no responde.", detalle: error.message }), { status: 500 });
   }
 }
