@@ -24,7 +24,7 @@ export async function onRequestPost(context) {
       },
       body: JSON.stringify({
         // MODELO ACTUALIZADO: llama3-8b-8192 ya no existe, usamos la versión 3.1
-        model: "llama-3.1-8b-instant", 
+        model: "openai/gpt-oss-20b", 
         messages: [
           {
             role: "system",
