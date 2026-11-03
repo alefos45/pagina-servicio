@@ -1,63 +1,72 @@
-import { handleChat, type ChatMessage } from '../_lib/groq';
-import { buildTrainerPrompt, type MenuItemForPrompt } from '../_lib/prompts';
+// Definimos los tipos para que TypeScript no dé error con context.env
+interface Env {
+  GROQ_API_KEY: string;
+}
 
-interface Env { GROQ_API_KEY?: string; }
-interface PagesContext { request: Request; env: Env; }
+export async function onRequestPost(context: { request: Request; env: Env }) {
+  try {
+    const apiKey = context.env.GROQ_API_KEY;
 
-const MAX_MESSAGES = 12;
-const MAX_CONTENT = 2000;
-const MAX_MENU_ITEMS = 100;
-
-export async function onRequestPost(context: PagesContext): Promise<Response> {
-  const json = (body: unknown, status = 200) =>
-    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
-
-  if (!context.env.GROQ_API_KEY) return json({ error: 'Capacitador no configurado.' }, 500);
-
-  let body: { role?: unknown; menu?: unknown; messages?: unknown };
-  try { body = await context.request.json() as typeof body; }
-  catch { return json({ error: 'Solicitud inválida.' }, 400); }
-
-  const role = typeof body.role === 'string' ? body.role : 'empleado';
-
-  const menu: MenuItemForPrompt[] = [];
-  if (Array.isArray(body.menu)) {
-    for (const raw of body.menu.slice(0, MAX_MENU_ITEMS)) {
-      if (!raw || typeof raw !== 'object') continue;
-      const m = raw as Record<string, unknown>;
-      if (typeof m.id !== 'string' || typeof m.name !== 'string') continue;
-      menu.push({
-        id: m.id,
-        name: m.name.slice(0, 200),
-        description: typeof m.description === 'string' ? m.description.slice(0, 500) : null,
-        allergens: Array.isArray(m.allergens)
-          ? (m.allergens as unknown[]).filter((a): a is string => typeof a === 'string').slice(0, 20)
-          : [],
-        recipe: (m.recipe as MenuItemForPrompt['recipe']) ?? null,
+    // 1. Verificación estricta de la API Key
+    if (!apiKey) {
+      console.error("❌ ERROR: La variable GROQ_API_KEY no está definida en Cloudflare.");
+      return new Response(JSON.stringify({ error: "Falta configurar la API Key en el servidor." }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
       });
     }
-  }
 
-  const messages: ChatMessage[] = [];
-  const raw = Array.isArray(body.messages) ? body.messages : [];
-  for (const item of raw) {
-    if (!item || typeof item !== 'object') continue;
-    const m = item as { role?: unknown; content?: unknown };
-    if ((m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string') {
-      messages.push({ role: m.role, content: m.content.slice(0, MAX_CONTENT) });
+    // 2. Obtener el mensaje
+    const requestBody = await context.request.json() as { message?: string };
+    const userMessage = requestBody.message || "Hola";
+
+    // 3. Llamar a Groq
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "llama-3.1-8b-instant", // Modelo actualizado y rápido de Groq
+        messages: [
+          {
+            role: "system",
+            content: "Eres el Capacitador IA de La Tierrita. Explicas ingredientes, alérgenos, maridajes y cómo recomendar platos. Eres amable y profesional."
+          },
+          { role: "user", content: userMessage }
+        ],
+        temperature: 0.7,
+      }),
+    });
+
+    // 4. Si Groq falla, imprimimos el error exacto en los logs
+    if (!response.ok) {
+        const errorData = await response.text();
+        console.error(`❌ Error de Groq (Status ${response.status}):`, errorData);
+        throw new Error(`Fallo en Groq: ${response.status}`);
     }
-  }
-  const trimmed = messages.slice(-MAX_MESSAGES);
-  if (trimmed.length === 0) return json({ error: 'Escribe un mensaje para empezar.' }, 400);
 
-  try {
-    const reply = await handleChat(context.env.GROQ_API_KEY, [
-      { role: 'system', content: buildTrainerPrompt(role, menu) },
-      ...trimmed,
-    ]);
-    return json({ reply });
-  } catch (err) {
-    console.error('Groq error:', err);
-    return json({ error: 'Capacitador no disponible.' }, 502);
+    // 5. Leer la respuesta de forma segura
+    const data = await response.json() as any;
+    
+    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+        console.error("❌ Respuesta inesperada de Groq:", JSON.stringify(data));
+        throw new Error("Formato de respuesta inválido");
+    }
+
+    const botReply = data.choices[0].message.content;
+
+    return new Response(JSON.stringify({ reply: botReply }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  } catch (error: any) {
+    console.error("❌ Error en el bloque catch:", error.message || error);
+    return new Response(JSON.stringify({ error: "El Capacitador no responde. Revisa los logs." }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 }
