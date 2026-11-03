@@ -30,7 +30,7 @@ export function Login() {
   return (
     <div className="grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
       <div className="hidden flex-col justify-between bg-forest p-12 text-cream lg:flex">
-        <p className="font-display text-xl tracking-tight">La Tierrita · Portal interno</p>
+        <p className="font-display text-xl tracking-tight">La Tierrita del Berriondo · Portal interno</p>
         <div className="max-w-md">
           <h1 className="font-display text-4xl leading-tight">
             El turno empieza <span className="italic text-saffron">aquí</span>.

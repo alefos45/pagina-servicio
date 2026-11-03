@@ -21,7 +21,7 @@ export function Sidebar() {
           <Sparkles className="h-4 w-4" />
         </div>
         <div>
-          <p className="font-display text-lg leading-none">La Tierrita</p>
+          <p className="font-display text-sm leading-tight font-semibold">La Tierrita del Berriondo</p>
           <p className="text-[11px] text-cream/50">Portal interno</p>
         </div>
       </div>
