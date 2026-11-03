@@ -1,0 +1,1869 @@
+This file is a merged representation of a subset of the codebase, containing files not matching ignore patterns, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching these patterns are excluded: node_modules/**, dist/**, .git/**, .env, package-lock.json
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+public/
+  _headers
+src/
+  auth/
+    AuthProvider.tsx
+    useAuth.ts
+  components/
+    layout/
+      ProtectedRoute.tsx
+  lib/
+    supabaseClient.ts
+  modules/
+    hr-chat/
+      HRChat.tsx
+    menu-agent/
+      MenuAgent.tsx
+    wellness/
+      WellnessDashboard.tsx
+  App.tsx
+  index.css
+  main.tsx
+  vite-env.d.ts
+supabase/
+  schema.sql
+.env.example
+.gitignore
+index.html
+package.json
+README.md
+tsconfig.json
+vite.config.ts
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="public/_headers">
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+</file>
+
+<file path="src/auth/AuthProvider.tsx">
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { Session } from '@supabase/supabase-js';
+import { supabase, type Profile } from '../lib/supabaseClient';
+import { AuthContext, type AuthContextValue } from './useAuth';
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const profileUserId = useRef<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadProfile = async (userId: string): Promise<void> => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (!active || profileUserId.current !== userId) return;
+
+      if (error) {
+        console.error('Error cargando el perfil:', error.message);
+        profileUserId.current = null;
+        setProfile(null);
+      } else {
+        setProfile(data);
+      }
+      setLoading(false);
+    };
+
+    const { data } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      const userId = newSession?.user.id ?? null;
+
+      if (!userId) {
+        profileUserId.current = null;
+        setProfile(null);
+        setLoading(false);
+        return;
+      }
+
+      // TOKEN_REFRESHED y eventos repetidos no recargan el perfil.
+      if (profileUserId.current === userId) return;
+
+      profileUserId.current = userId;
+      setLoading(true);
+      // setTimeout evita el deadlock de supabase-js al llamar a la API dentro del callback.
+      setTimeout(() => {
+        void loadProfile(userId);
+      }, 0);
+    });
+
+    return () => {
+      active = false;
+      profileUserId.current = null;
+      data.subscription.unsubscribe();
+    };
+  }, []);
+
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      session,
+      user: session?.user ?? null,
+      profile,
+      role: profile?.role ?? null,
+      loading,
+      signOut: async () => {
+        await supabase.auth.signOut();
+      },
+    }),
+    [session, profile, loading],
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+</file>
+
+<file path="src/auth/useAuth.ts">
+import { createContext, useContext } from 'react';
+import type { Session, User } from '@supabase/supabase-js';
+import type { AppRole, Profile } from '../lib/supabaseClient';
+
+export interface AuthContextValue {
+  session: Session | null;
+  user: User | null;
+  profile: Profile | null;
+  role: AppRole | null;
+  loading: boolean;
+  signOut: () => Promise<void>;
+}
+
+export const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+export function useAuth(): AuthContextValue {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth debe usarse dentro de <AuthProvider>.');
+  }
+  return context;
+}
+</file>
+
+<file path="src/components/layout/ProtectedRoute.tsx">
+import type { ReactNode } from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../../auth/useAuth';
+import type { AppRole } from '../../lib/supabaseClient';
+
+interface ProtectedRouteProps {
+  allowedRoles: AppRole[];
+  children: ReactNode;
+}
+
+export default function ProtectedRoute({ allowedRoles, children }: ProtectedRouteProps) {
+  const { user, role, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return (
+      <div className="page-center" role="status" aria-live="polite">
+        Cargando…
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  if (!role || !allowedRoles.includes(role)) {
+    return <Navigate to="/403" replace />;
+  }
+
+  return <>{children}</>;
+}
+</file>
+
+<file path="src/lib/supabaseClient.ts">
+import { createClient } from '@supabase/supabase-js';
+
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[];
+
+export type AppRole = 'admin' | 'cocinero' | 'mesero' | 'empleado';
+export type HRQueryStatus = 'open' | 'answered' | 'closed';
+
+export type Profile = {
+  id: string;
+  role: AppRole;
+  full_name: string | null;
+  created_at: string;
+};
+
+export type WellnessResource = {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+  created_at: string;
+};
+
+export type HRQuery = {
+  id: string;
+  user_id: string;
+  subject: string;
+  status: HRQueryStatus;
+  created_at: string;
+};
+
+export type HRMessage = {
+  id: string;
+  query_id: string;
+  sender_id: string;
+  message: string;
+  created_at: string;
+};
+
+export type MenuItemRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  recipe: Json | null;
+  allergens: string[];
+};
+
+export type MenuItemPublic = {
+  id: string;
+  name: string;
+  description: string | null;
+  allergens: string[];
+};
+
+export type MenuItemResult = MenuItemPublic & { recipe?: Json | null };
+
+type Table<Row, Insert> = {
+  Row: Row;
+  Insert: Insert;
+  Update: Partial<Insert>;
+  Relationships: [];
+};
+
+export type Database = {
+  public: {
+    Tables: {
+      profiles: Table<
+        Profile,
+        { id: string; role?: AppRole; full_name?: string | null; created_at?: string }
+      >;
+      wellness_resources: Table<
+        WellnessResource,
+        { id?: string; title: string; content: string; category?: string; created_at?: string }
+      >;
+      hr_queries: Table<
+        HRQuery,
+        { id?: string; user_id?: string; subject: string; status?: HRQueryStatus; created_at?: string }
+      >;
+      hr_messages: Table<
+        HRMessage,
+        { id?: string; query_id: string; sender_id?: string; message: string; created_at?: string }
+      >;
+      menu_items: Table<
+        MenuItemRow,
+        { id?: string; name: string; description?: string | null; recipe?: Json | null; allergens?: string[] }
+      >;
+    };
+    Views: {
+      menu_items_public: { Row: MenuItemPublic; Relationships: [] };
+    };
+    Functions: {
+      get_menu_item_for_role: { Args: { item_id: string }; Returns: Json };
+    };
+    Enums: Record<string, never>;
+    CompositeTypes: Record<string, never>;
+  };
+};
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error('Faltan VITE_SUPABASE_URL o VITE_SUPABASE_ANON_KEY en las variables de entorno.');
+}
+
+export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+});
+</file>
+
+<file path="src/modules/hr-chat/HRChat.tsx">
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import DOMPurify from 'dompurify';
+import { useAuth } from '../../auth/useAuth';
+import {
+  supabase,
+  type HRMessage,
+  type HRQuery,
+  type HRQueryStatus,
+} from '../../lib/supabaseClient';
+
+const STATUS_LABEL: Record<HRQueryStatus, string> = {
+  open: 'Abierta',
+  answered: 'Respondida',
+  closed: 'Cerrada',
+};
+
+const cleanText = (value: string): string =>
+  DOMPurify.sanitize(value, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] });
+
+const formatDate = (iso: string): string =>
+  new Date(iso).toLocaleString('es-CO', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+export default function HRChat() {
+  const { user, role } = useAuth();
+  const userId = user?.id ?? null;
+  const isAdmin = role === 'admin';
+
+  const [queries, setQueries] = useState<HRQuery[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<HRMessage[]>([]);
+  const [loadingQueries, setLoadingQueries] = useState<boolean>(true);
+  const [loadingMessages, setLoadingMessages] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [subject, setSubject] = useState<string>('');
+  const [draft, setDraft] = useState<string>('');
+  const [busy, setBusy] = useState<boolean>(false);
+  const [cooldown, setCooldown] = useState<boolean>(false);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  const selected = useMemo(
+    () => queries.find((query) => query.id === selectedId) ?? null,
+    [queries, selectedId],
+  );
+
+  useEffect(() => {
+    if (!userId) return;
+    let active = true;
+
+    const load = async (): Promise<void> => {
+      setLoadingQueries(true);
+      const base = supabase.from('hr_queries').select('*');
+      const scoped = isAdmin ? base : base.eq('user_id', userId);
+      const { data, error: fetchError } = await scoped.order('created_at', { ascending: false });
+
+      if (!active) return;
+
+      if (fetchError) {
+        console.error('Error cargando consultas:', fetchError.message);
+        setError('No se pudieron cargar las consultas.');
+      } else {
+        setQueries(data ?? []);
+      }
+      setLoadingQueries(false);
+    };
+
+    void load();
+
+    return () => {
+      active = false;
+    };
+  }, [userId, isAdmin]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setMessages([]);
+      return;
+    }
+    let active = true;
+
+    const load = async (): Promise<void> => {
+      setLoadingMessages(true);
+      const { data, error: fetchError } = await supabase
+        .from('hr_messages')
+        .select('*')
+        .eq('query_id', selectedId)
+        .order('created_at', { ascending: true });
+
+      if (!active) return;
+
+      if (fetchError) {
+        console.error('Error cargando mensajes:', fetchError.message);
+        setError('No se pudieron cargar los mensajes.');
+        setMessages([]);
+      } else {
+        setMessages(data ?? []);
+      }
+      setLoadingMessages(false);
+    };
+
+    void load();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedId]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [messages]);
+
+  const handleCreateQuery = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+    const cleanSubject = subject.trim();
+    if (!userId || !cleanSubject || busy || cooldown) return;
+
+    setBusy(true);
+    setCooldown(true);
+    // RATE LIMIT: MVP sin Worker. El cliente deshabilita el botón 3s tras enviar.
+    setTimeout(() => setCooldown(false), 3000);
+    setError(null);
+
+    const { data, error: insertError } = await supabase
+      .from('hr_queries')
+      .insert({ user_id: userId, subject: cleanSubject })
+      .select('*')
+      .single();
+
+    setBusy(false);
+
+    if (insertError || !data) {
+      console.error('Error creando consulta:', insertError?.message);
+      setError('No se pudo crear la consulta.');
+      return;
+    }
+
+    setQueries((previous) => [data, ...previous]);
+    setSubject('');
+    setSelectedId(data.id);
+  };
+
+  const handleSendMessage = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+    const text = draft.trim();
+    if (!userId || !selectedId || !text || busy || cooldown) return;
+
+    setBusy(true);
+    setCooldown(true);
+    // RATE LIMIT: MVP sin Worker. El cliente deshabilita el botón 3s tras enviar.
+    setTimeout(() => setCooldown(false), 3000);
+    setError(null);
+
+    const { data, error: insertError } = await supabase
+      .from('hr_messages')
+      .insert({ query_id: selectedId, sender_id: userId, message: text })
+      .select('*')
+      .single();
+
+    setBusy(false);
+
+    if (insertError || !data) {
+      console.error('Error enviando mensaje:', insertError?.message);
+      setError('No se pudo enviar el mensaje.');
+      return;
+    }
+
+    setMessages((previous) => [...previous, data]);
+    setDraft('');
+  };
+
+  const isClosed = selected?.status === 'closed';
+
+  return (
+    <section className="chat">
+      <aside className="chat-sidebar card">
+        <h2>Consultas RR. HH.</h2>
+
+        <form onSubmit={(event) => void handleCreateQuery(event)} className="stack">
+          <label htmlFor="hr-subject">Nueva consulta</label>
+          <input
+            id="hr-subject"
+            type="text"
+            value={subject}
+            onChange={(event) => setSubject(event.target.value)}
+            maxLength={200}
+            placeholder="Asunto"
+            required
+          />
+          <button
+            type="submit"
+            className="btn"
+            disabled={busy || cooldown || subject.trim() === ''}
+          >
+            {cooldown ? 'Espera…' : 'Crear consulta'}
+          </button>
+        </form>
+
+        {loadingQueries && <p className="muted">Cargando…</p>}
+        {!loadingQueries && queries.length === 0 && (
+          <p className="muted">No hay consultas registradas.</p>
+        )}
+
+        <ul className="chat-list">
+          {queries.map((query) => (
+            <li key={query.id}>
+              <button
+                type="button"
+                className={`chat-item${query.id === selectedId ? ' active' : ''}`}
+                onClick={() => setSelectedId(query.id)}
+                disabled={busy}
+              >
+                <span>{query.subject}</span>
+                <small className="muted">
+                  {STATUS_LABEL[query.status]} · {formatDate(query.created_at)}
+                </small>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </aside>
+
+      <div className="chat-detail card">
+        {error && (
+          <p className="alert" role="alert">
+            {error}
+          </p>
+        )}
+
+        {!selected ? (
+          <p className="muted">Selecciona o crea una consulta para ver la conversación.</p>
+        ) : (
+          <>
+            <header className="chat-header">
+              <h2>{selected.subject}</h2>
+              <span className="badge">{STATUS_LABEL[selected.status]}</span>
+            </header>
+
+            <div className="messages" aria-live="polite">
+              {loadingMessages && <p className="muted">Cargando mensajes…</p>}
+              {!loadingMessages && messages.length === 0 && (
+                <p className="muted">Aún no hay mensajes en esta consulta.</p>
+              )}
+              {messages.map((message) => {
+                const mine = message.sender_id === userId;
+                return (
+                  <div key={message.id} className={`msg${mine ? ' me' : ''}`}>
+                    <span className="msg-meta">
+                      {mine ? 'Tú' : isAdmin ? 'Empleado' : 'RR. HH.'} · {formatDate(message.created_at)}
+                    </span>
+                    <p
+                      className="msg-text"
+                      dangerouslySetInnerHTML={{ __html: cleanText(message.message) }}
+                    />
+                  </div>
+                );
+              })}
+              <div ref={bottomRef} />
+            </div>
+
+            <form onSubmit={(event) => void handleSendMessage(event)} className="stack">
+              <label htmlFor="hr-message">Mensaje</label>
+              <textarea
+                id="hr-message"
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                maxLength={2000}
+                rows={3}
+                disabled={isClosed}
+                required
+              />
+              <button
+                type="submit"
+                className="btn"
+                disabled={busy || cooldown || draft.trim() === '' || isClosed}
+              >
+                {cooldown ? 'Espera…' : 'Enviar'}
+              </button>
+            </form>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+</file>
+
+<file path="src/modules/menu-agent/MenuAgent.tsx">
+import { useEffect, useState, type FormEvent } from 'react';
+import DOMPurify from 'dompurify';
+import {
+  supabase,
+  type Json,
+  type MenuItemPublic,
+  type MenuItemResult,
+} from '../../lib/supabaseClient';
+
+const MAX_RESULTS = 3;
+
+const STOPWORDS = new Set([
+  'como', 'lleva', 'tiene', 'tienen', 'receta', 'ingredientes', 'ingrediente', 'alergenos',
+  'alergeno', 'plato', 'cual', 'cuales', 'para', 'sobre', 'esta', 'este', 'que', 'quiero',
+  'saber', 'dime', 'carta', 'preparar', 'preparacion',
+]);
+
+const ANSWER_CONFIG = {
+  ALLOWED_TAGS: ['h3', 'h4', 'p', 'strong', 'em', 'ul', 'li', 'dl', 'dt', 'dd'],
+  ALLOWED_ATTR: [] as string[],
+};
+
+interface Answer {
+  id: string;
+  html: string;
+}
+
+const normalize = (value: string): string =>
+  value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+function recipeToHtml(value: Json | undefined): string {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) {
+    return `<ul>${value.map((entry) => `<li>${recipeToHtml(entry)}</li>`).join('')}</ul>`;
+  }
+  if (typeof value === 'object') {
+    return `<dl>${Object.entries(value)
+      .map(([key, entry]) => `<dt>${escapeHtml(key)}</dt><dd>${recipeToHtml(entry)}</dd>`)
+      .join('')}</dl>`;
+  }
+  return escapeHtml(String(value));
+}
+
+function buildAnswerHtml(item: MenuItemResult): string {
+  const allergens =
+    item.allergens && item.allergens.length > 0
+      ? item.allergens.map(escapeHtml).join(', ')
+      : 'Sin alérgenos declarados';
+
+  const parts: string[] = [
+    `<h3>${escapeHtml(item.name)}</h3>`,
+    item.description ? `<p>${escapeHtml(item.description)}</p>` : '',
+    `<p><strong>Alérgenos:</strong> ${allergens}</p>`,
+  ];
+
+  if (!('recipe' in item)) {
+    parts.push('<p><em>La receta está restringida para tu rol.</em></p>');
+  } else if (item.recipe === null || item.recipe === undefined) {
+    parts.push('<p><em>Sin receta registrada.</em></p>');
+  } else {
+    parts.push(`<h4>Receta</h4>${recipeToHtml(item.recipe)}`);
+  }
+
+  return DOMPurify.sanitize(parts.join(''), ANSWER_CONFIG);
+}
+
+function findMatches(question: string, items: MenuItemPublic[]): MenuItemPublic[] {
+  const q = normalize(question);
+  if (q === '') return [];
+
+  const exact = items.filter((item) => {
+    const name = normalize(item.name);
+    return name !== '' && q.includes(name);
+  });
+  if (exact.length > 0) return exact.slice(0, MAX_RESULTS);
+
+  const tokens = q.split(/[^a-z0-9]+/).filter((token) => token.length >= 4 && !STOPWORDS.has(token));
+  if (tokens.length === 0) return [];
+
+  return items
+    .map((item) => {
+      const name = normalize(item.name);
+      return { item, score: tokens.filter((token) => name.includes(token)).length };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_RESULTS)
+    .map((entry) => entry.item);
+}
+
+export default function MenuAgent() {
+  const [items, setItems] = useState<MenuItemPublic[]>([]);
+  const [loadingMenu, setLoadingMenu] = useState<boolean>(true);
+  const [question, setQuestion] = useState<string>('');
+  const [answers, setAnswers] = useState<Answer[]>([]);
+  const [searched, setSearched] = useState<boolean>(false);
+  const [busy, setBusy] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const load = async (): Promise<void> => {
+      const { data, error: fetchError } = await supabase
+        .from('menu_items_public')
+        .select('*')
+        .order('name', { ascending: true });
+
+      if (!active) return;
+
+      if (fetchError) {
+        console.error('Error cargando la carta:', fetchError.message);
+        setError('No se pudo cargar la carta.');
+      } else {
+        setItems(data ?? []);
+      }
+      setLoadingMenu(false);
+    };
+
+    void load();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleAsk = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+    const text = question.trim();
+    if (!text || busy) return;
+
+    setBusy(true);
+    setSearched(false);
+    setError(null);
+
+    const matches = findMatches(text, items);
+
+    try {
+      const results = await Promise.all(
+        matches.map(async (match) => {
+          const { data, error: rpcError } = await supabase.rpc('get_menu_item_for_role', {
+            item_id: match.id,
+          });
+          if (rpcError) throw rpcError;
+          return data as unknown as MenuItemResult | null;
+        }),
+      );
+
+      setAnswers(
+        results
+          .filter((result): result is MenuItemResult => result !== null)
+          .map((result) => ({ id: result.id, html: buildAnswerHtml(result) })),
+      );
+    } catch (caught) {
+      console.error('Error consultando el plato:', caught instanceof Error ? caught.message : caught);
+      setError('No se pudo consultar el plato.');
+      setAnswers([]);
+    } finally {
+      setBusy(false);
+      setSearched(true);
+    }
+  };
+
+  return (
+    <section>
+      <h1>Agente de carta</h1>
+
+      <form onSubmit={(event) => void handleAsk(event)} className="menu-form">
+        <label htmlFor="menu-question" className="sr-only">
+          Pregunta por un plato
+        </label>
+        <input
+          id="menu-question"
+          type="text"
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+          maxLength={200}
+          placeholder="Ej.: ¿Qué lleva la lasaña?"
+          disabled={loadingMenu}
+          required
+        />
+        <button type="submit" className="btn" disabled={busy || loadingMenu || question.trim() === ''}>
+          {busy ? 'Consultando…' : 'Preguntar'}
+        </button>
+      </form>
+
+      {loadingMenu && <p className="muted">Cargando carta…</p>}
+
+      {!loadingMenu && items.length > 0 && (
+        <ul className="chips" aria-label="Platos disponibles">
+          {items.map((item) => (
+            <li key={item.id} className="chip">
+              {item.name}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {error && (
+        <p className="alert" role="alert">
+          {error}
+        </p>
+      )}
+
+      {searched && !busy && !error && answers.length === 0 && (
+        <p className="muted">No encontré ese plato en la carta.</p>
+      )}
+
+      {answers.map((answer) => (
+        <article
+          key={answer.id}
+          className="card answer"
+          dangerouslySetInnerHTML={{ __html: answer.html }}
+        />
+      ))}
+    </section>
+  );
+}
+</file>
+
+<file path="src/modules/wellness/WellnessDashboard.tsx">
+import { useEffect, useMemo, useState } from 'react';
+import DOMPurify from 'dompurify';
+import { supabase, type WellnessResource } from '../../lib/supabaseClient';
+
+const SANITIZE_CONFIG = {
+  ALLOWED_TAGS: ['p', 'br', 'b', 'i', 'em', 'strong', 'ul', 'ol', 'li', 'h3', 'h4', 'blockquote'],
+  ALLOWED_ATTR: [] as string[],
+};
+
+const formatDate = (iso: string): string =>
+  new Date(iso).toLocaleDateString('es-CO', { year: 'numeric', month: 'short', day: 'numeric' });
+
+export default function WellnessDashboard() {
+  const [resources, setResources] = useState<WellnessResource[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const load = async (): Promise<void> => {
+      const { data, error: fetchError } = await supabase
+        .from('wellness_resources')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!active) return;
+
+      if (fetchError) {
+        console.error('Error cargando recursos de bienestar:', fetchError.message);
+        setError('No se pudieron cargar los recursos de bienestar.');
+      } else {
+        setResources(data ?? []);
+      }
+      setLoading(false);
+    };
+
+    void load();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const safeResources = useMemo(
+    () =>
+      resources.map((resource) => ({
+        ...resource,
+        safeContent: DOMPurify.sanitize(resource.content, SANITIZE_CONFIG),
+      })),
+    [resources],
+  );
+
+  return (
+    <section>
+      <h1>Bienestar</h1>
+
+      {loading && <p className="muted">Cargando recursos…</p>}
+      {error && (
+        <p className="alert" role="alert">
+          {error}
+        </p>
+      )}
+      {!loading && !error && safeResources.length === 0 && (
+        <p className="muted">Aún no hay recursos publicados.</p>
+      )}
+
+      <div className="card-grid">
+        {safeResources.map((resource) => (
+          <article key={resource.id} className="card">
+            <span className="badge">{resource.category}</span>
+            <h2>{resource.title}</h2>
+            <div className="rich" dangerouslySetInnerHTML={{ __html: resource.safeContent }} />
+            <small className="muted">{formatDate(resource.created_at)}</small>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+</file>
+
+<file path="src/App.tsx">
+import { useState, type FormEvent, type ReactNode } from 'react';
+import { Link, Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { useAuth } from './auth/useAuth';
+import ProtectedRoute from './components/layout/ProtectedRoute';
+import { supabase, type AppRole } from './lib/supabaseClient';
+import HRChat from './modules/hr-chat/HRChat';
+import MenuAgent from './modules/menu-agent/MenuAgent';
+import WellnessDashboard from './modules/wellness/WellnessDashboard';
+
+const ALL_ROLES: AppRole[] = ['admin', 'cocinero', 'mesero', 'empleado'];
+const HR_ROLES: AppRole[] = ['admin', 'mesero', 'empleado'];
+
+const NAV_ITEMS: { to: string; label: string; roles: AppRole[] }[] = [
+  { to: '/bienestar', label: 'Bienestar', roles: ALL_ROLES },
+  { to: '/rrhh', label: 'Chat RR. HH.', roles: HR_ROLES },
+  { to: '/carta', label: 'Agente de carta', roles: ALL_ROLES },
+];
+
+function AppShell({ children }: { children: ReactNode }) {
+  const { profile, role, signOut } = useAuth();
+  const links = NAV_ITEMS.filter((item) => role !== null && item.roles.includes(role));
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <strong>Página Servicio</strong>
+        <nav aria-label="Principal">
+          {links.map((link) => (
+            <NavLink
+              key={link.to}
+              to={link.to}
+              className={({ isActive }) => (isActive ? 'active' : undefined)}
+            >
+              {link.label}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="topbar-user">
+          <span className="muted">
+            {profile?.full_name || 'Usuario'} · {role}
+          </span>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
+              void signOut();
+            }}
+          >
+            Salir
+          </button>
+        </div>
+      </header>
+      <main className="container">{children}</main>
+    </div>
+  );
+}
+
+function Guarded({ roles, children }: { roles: AppRole[]; children: ReactNode }) {
+  return (
+    <ProtectedRoute allowedRoles={roles}>
+      <AppShell>{children}</AppShell>
+    </ProtectedRoute>
+  );
+}
+
+function LoginPage() {
+  const { user } = useAuth();
+  const location = useLocation();
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState<boolean>(false);
+
+  if (user) {
+    const from =
+      (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/';
+    return <Navigate to={from} replace />;
+  }
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+    if (submitting) return;
+
+    setSubmitting(true);
+    setError(null);
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+
+    setSubmitting(false);
+    if (signInError) {
+      setError('Credenciales inválidas.');
+    }
+  };
+
+  return (
+    <main className="page-center">
+      <form onSubmit={(event) => void handleSubmit(event)} className="card stack login-card">
+        <h1>Iniciar sesión</h1>
+
+        <label htmlFor="login-email">Correo electrónico</label>
+        <input
+          id="login-email"
+          type="email"
+          autoComplete="email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          required
+        />
+
+        <label htmlFor="login-password">Contraseña</label>
+        <input
+          id="login-password"
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          required
+        />
+
+        {error && (
+          <p className="alert" role="alert">
+            {error}
+          </p>
+        )}
+
+        <button type="submit" className="btn" disabled={submitting}>
+          {submitting ? 'Ingresando…' : 'Ingresar'}
+        </button>
+      </form>
+    </main>
+  );
+}
+
+function ForbiddenPage() {
+  return (
+    <main className="page-center">
+      <div className="card stack login-card">
+        <h1>403</h1>
+        <p>No tienes permiso para acceder a esta sección.</p>
+        <Link to="/" className="btn">
+          Volver al inicio
+        </Link>
+      </div>
+    </main>
+  );
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/403" element={<ForbiddenPage />} />
+      <Route path="/" element={<Navigate to="/bienestar" replace />} />
+      <Route
+        path="/bienestar"
+        element={
+          <Guarded roles={ALL_ROLES}>
+            <WellnessDashboard />
+          </Guarded>
+        }
+      />
+      <Route
+        path="/rrhh"
+        element={
+          <Guarded roles={HR_ROLES}>
+            <HRChat />
+          </Guarded>
+        }
+      />
+      <Route
+        path="/carta"
+        element={
+          <Guarded roles={ALL_ROLES}>
+            <MenuAgent />
+          </Guarded>
+        }
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+</file>
+
+<file path="src/index.css">
+:root {
+  --bg: #f6f7f9;
+  --fg: #1b1f24;
+  --muted: #5b6570;
+  --primary: #1f6feb;
+  --primary-fg: #ffffff;
+  --card: #ffffff;
+  --border: #d8dde3;
+  --danger-bg: #fdecea;
+  --danger-fg: #b42318;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.5;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.25;
+  margin: 0 0 0.5rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.page-center {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar nav {
+  display: flex;
+  gap: 0.75rem;
+  flex: 1;
+}
+
+.topbar nav a {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+}
+
+.topbar nav a.active {
+  color: var(--primary);
+  background: #e8f0fe;
+}
+
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: #e8f0fe;
+  color: var(--primary);
+}
+
+.rich p {
+  margin: 0.4rem 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+input,
+textarea {
+  font: inherit;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+}
+
+.btn {
+  font: inherit;
+  cursor: pointer;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--primary-fg);
+  text-decoration: none;
+  text-align: center;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--primary);
+}
+
+.alert {
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+}
+
+.chat {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.chat-list {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.chat-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+}
+
+.chat-item.active {
+  border-color: var(--primary);
+  background: #e8f0fe;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 0.5rem 0;
+}
+
+.msg {
+  align-self: flex-start;
+  max-width: 80%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  background: #eef0f3;
+}
+
+.msg.me {
+  align-self: flex-end;
+  background: #e8f0fe;
+}
+
+.msg-meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.msg-text {
+  margin: 0.15rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.menu-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.menu-form input {
+  flex: 1;
+}
+
+.chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0;
+  margin: 0 0 1rem;
+}
+
+.chip {
+  font-size: 0.85rem;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+}
+
+.answer {
+  margin-bottom: 1rem;
+}
+
+.answer dl {
+  margin: 0;
+}
+
+.answer dt {
+  font-weight: 600;
+  margin-top: 0.4rem;
+}
+
+.answer dd {
+  margin: 0 0 0 1rem;
+}
+
+@media (max-width: 800px) {
+  .chat {
+    grid-template-columns: 1fr;
+  }
+}
+</file>
+
+<file path="src/main.tsx">
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
+import App from './App';
+import { AuthProvider } from './auth/AuthProvider';
+import './index.css';
+
+const container = document.getElementById('root');
+
+if (!container) {
+  throw new Error('No se encontró el elemento #root.');
+}
+
+createRoot(container).render(
+  <StrictMode>
+    <BrowserRouter>
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    </BrowserRouter>
+  </StrictMode>,
+);
+</file>
+
+<file path="src/vite-env.d.ts">
+/// <reference types="vite/client" />
+
+interface ImportMetaEnv {
+  readonly VITE_SUPABASE_URL: string;
+  readonly VITE_SUPABASE_ANON_KEY: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+</file>
+
+<file path="supabase/schema.sql">
+-- =====================================================================
+-- TABLAS
+-- =====================================================================
+create table public.profiles (
+  id uuid primary key references auth.users (id) on delete cascade,
+  role text not null default 'empleado'
+    check (role in ('admin', 'cocinero', 'mesero', 'empleado')),
+  full_name text,
+  created_at timestamptz not null default now()
+);
+
+create table public.wellness_resources (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  content text not null,
+  category text not null default 'general',
+  created_at timestamptz not null default now()
+);
+
+create table public.hr_queries (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  subject text not null check (char_length(subject) between 1 and 200),
+  status text not null default 'open' check (status in ('open', 'answered', 'closed')),
+  created_at timestamptz not null default now()
+);
+
+create table public.hr_messages (
+  id uuid primary key default gen_random_uuid(),
+  query_id uuid not null references public.hr_queries (id) on delete cascade,
+  sender_id uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  message text not null check (char_length(message) between 1 and 2000),
+  created_at timestamptz not null default now()
+);
+
+create table public.menu_items (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  description text,
+  recipe jsonb,
+  allergens text[] not null default '{}'
+);
+
+create index hr_queries_user_id_idx on public.hr_queries (user_id);
+create index hr_messages_query_id_idx on public.hr_messages (query_id);
+
+-- =====================================================================
+-- TRIGGER: alta de perfil al crear usuario en auth.users
+-- =====================================================================
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_role text;
+begin
+  v_role := coalesce(new.raw_user_meta_data ->> 'role', 'empleado');
+
+  -- SEGURIDAD: 'admin' jamás se asigna desde raw_user_meta_data; se promueve solo por SQL con privilegios.
+  if v_role not in ('cocinero', 'mesero', 'empleado') then
+    v_role := 'empleado';
+  end if;
+
+  insert into public.profiles (id, role, full_name)
+  values (new.id, v_role, coalesce(new.raw_user_meta_data ->> 'full_name', ''));
+
+  return new;
+end;
+$$;
+
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- =====================================================================
+-- FUNCIÓN AUXILIAR: rol del usuario autenticado (evita recursión de RLS)
+-- =====================================================================
+create or replace function public.get_my_role()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select p.role from public.profiles p where p.id = auth.uid();
+$$;
+
+revoke all on function public.get_my_role() from public, anon;
+grant execute on function public.get_my_role() to authenticated;
+
+-- =====================================================================
+-- RLS
+-- =====================================================================
+alter table public.profiles enable row level security;
+alter table public.wellness_resources enable row level security;
+alter table public.hr_queries enable row level security;
+alter table public.hr_messages enable row level security;
+alter table public.menu_items enable row level security;
+
+revoke all on public.profiles, public.wellness_resources, public.hr_queries,
+  public.hr_messages, public.menu_items from anon;
+
+-- profiles: cada usuario lee solo su propio perfil; admin gestiona todos. Ningún usuario puede cambiar su rol.
+create policy profiles_select_own on public.profiles
+  for select to authenticated
+  using (id = (select auth.uid()));
+
+create policy profiles_admin_all on public.profiles
+  for all to authenticated
+  using ((select public.get_my_role()) = 'admin')
+  with check ((select public.get_my_role()) = 'admin');
+
+-- wellness_resources: cualquier usuario autenticado lee; solo admin crea, edita y elimina.
+create policy wellness_select_authenticated on public.wellness_resources
+  for select to authenticated
+  using (true);
+
+create policy wellness_admin_all on public.wellness_resources
+  for all to authenticated
+  using ((select public.get_my_role()) = 'admin')
+  with check ((select public.get_my_role()) = 'admin');
+
+-- hr_queries: el usuario solo ve y crea sus propias consultas; admin ve y gestiona todas; cocinero NO tiene acceso.
+create policy hr_queries_select_own on public.hr_queries
+  for select to authenticated
+  using (
+    user_id = (select auth.uid())
+    and (select public.get_my_role()) in ('admin', 'mesero', 'empleado')
+  );
+
+create policy hr_queries_insert_own on public.hr_queries
+  for insert to authenticated
+  with check (
+    user_id = (select auth.uid())
+    and (select public.get_my_role()) in ('admin', 'mesero', 'empleado')
+  );
+
+create policy hr_queries_admin_all on public.hr_queries
+  for all to authenticated
+  using ((select public.get_my_role()) = 'admin')
+  with check ((select public.get_my_role()) = 'admin');
+
+-- hr_messages: el usuario solo lee y escribe en sus propias consultas; admin lee y responde en todas; cocinero NO tiene acceso.
+create policy hr_messages_select_own on public.hr_messages
+  for select to authenticated
+  using (
+    (select public.get_my_role()) in ('admin', 'mesero', 'empleado')
+    and exists (
+      select 1 from public.hr_queries q
+      where q.id = hr_messages.query_id
+        and q.user_id = (select auth.uid())
+    )
+  );
+
+create policy hr_messages_insert_own on public.hr_messages
+  for insert to authenticated
+  with check (
+    sender_id = (select auth.uid())
+    and (select public.get_my_role()) in ('admin', 'mesero', 'empleado')
+    and exists (
+      select 1 from public.hr_queries q
+      where q.id = hr_messages.query_id
+        and q.user_id = (select auth.uid())
+    )
+  );
+
+create policy hr_messages_admin_select on public.hr_messages
+  for select to authenticated
+  using ((select public.get_my_role()) = 'admin');
+
+create policy hr_messages_admin_insert on public.hr_messages
+  for insert to authenticated
+  with check (
+    (select public.get_my_role()) = 'admin'
+    and sender_id = (select auth.uid())
+  );
+
+-- menu_items: la tabla base (con recipe) solo la leen cocinero y admin; solo admin escribe.
+-- El mesero y demás roles consultan la carta por la vista menu_items_public (sin recipe) o por la RPC get_menu_item_for_role.
+create policy menu_items_select_cocinero on public.menu_items
+  for select to authenticated
+  using ((select public.get_my_role()) = 'cocinero');
+
+create policy menu_items_admin_all on public.menu_items
+  for all to authenticated
+  using ((select public.get_my_role()) = 'admin')
+  with check ((select public.get_my_role()) = 'admin');
+
+-- Vista sin la columna recipe; se ejecuta con los privilegios del dueño (omite RLS de la tabla base de forma intencional).
+create view public.menu_items_public as
+  select id, name, description, allergens
+  from public.menu_items;
+
+revoke all on public.menu_items_public from public, anon, authenticated;
+grant select on public.menu_items_public to authenticated;
+
+-- =====================================================================
+-- RPC: plato según el rol del usuario (recipe solo para cocinero y admin)
+-- =====================================================================
+create or replace function public.get_menu_item_for_role(item_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_role text;
+  v_item jsonb;
+begin
+  if auth.uid() is null then
+    raise exception 'No autenticado' using errcode = '28000';
+  end if;
+
+  select p.role into v_role from public.profiles p where p.id = auth.uid();
+
+  if v_role is null then
+    raise exception 'Perfil no encontrado' using errcode = '42501';
+  end if;
+
+  select case
+           when v_role in ('cocinero', 'admin') then to_jsonb(m)
+           else to_jsonb(m) - 'recipe'
+         end
+    into v_item
+    from public.menu_items m
+   where m.id = item_id;
+
+  return v_item;
+end;
+$$;
+
+revoke all on function public.get_menu_item_for_role(uuid) from public, anon;
+grant execute on function public.get_menu_item_for_role(uuid) to authenticated;
+</file>
+
+<file path=".env.example">
+VITE_SUPABASE_URL=https://TU-PROYECTO.supabase.co
+VITE_SUPABASE_ANON_KEY=TU_ANON_KEY
+</file>
+
+<file path=".gitignore">
+node_modules
+dist
+.env
+.env.local
+*.log
+</file>
+
+<file path="index.html">
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Página Servicio</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+</file>
+
+<file path="package.json">
+{
+  "name": "pagina-servicio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.47.10",
+    "dompurify": "3.1.7",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.28.0"
+  },
+  "devDependencies": {
+    "@types/dompurify": "3.0.5",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "typescript": "5.6.3",
+    "vite": "5.4.11"
+  }
+}
+</file>
+
+<file path="README.md">
+# Página Servicio
+
+React + TypeScript + Vite + Supabase (Auth, Postgres, RLS, RPC). Despliegue en Cloudflare Pages.
+
+**Justificación:** Se elige Edge Function sobre Worker porque la lógica de RLS/RPC ya vive en Supabase, reduciendo la superficie de ataque y la latencia.
+
+## Instalación local
+
+```bash
+npm i
+cp .env.example .env
+```
+
+Editar `.env`:
+
+```
+VITE_SUPABASE_URL=https://TU-PROYECTO.supabase.co
+VITE_SUPABASE_ANON_KEY=TU_ANON_KEY
+```
+
+1. En Supabase > SQL Editor, ejecutar `supabase/schema.sql`.
+2. En Supabase > Authentication > Providers > Email, desactivar "Allow new users to sign up".
+3. Crear usuarios en Authentication > Users con `user_metadata`, por ejemplo: `{"role": "mesero", "full_name": "Ana Pérez"}`.
+4. Promover un administrador por SQL (el trigger nunca asigna `admin` desde metadata):
+
+```sql
+update public.profiles set role = 'admin' where id = '<UUID_DEL_USUARIO>';
+```
+
+5. Si ya existían usuarios antes del trigger:
+
+```sql
+insert into public.profiles (id, role, full_name)
+select id, 'empleado', coalesce(raw_user_meta_data ->> 'full_name', '')
+from auth.users
+on conflict (id) do nothing;
+```
+
+6. `npm run dev`
+
+## Despliegue en Cloudflare Pages
+
+- Build command: `npm run build`
+- Build output directory: `dist`
+- Variables de entorno: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `NODE_VERSION=20`
+- `public/_headers` aplica CSP y cabeceras de seguridad.
+
+## Checklist de Seguridad (OWASP)
+
+- [ ] RLS activo en todas las tablas.
+- [ ] `service_role` NUNCA en el frontend.
+- [ ] Sanitización XSS con DOMPurify en wellness y chat.
+- [ ] Rutas protegidas por rol (403).
+- [ ] Rate limiting básico en UI (comentado como deuda técnica para Worker).
+</file>
+
+<file path="tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src", "vite.config.ts"]
+}
+</file>
+
+<file path="vite.config.ts">
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  build: {
+    outDir: 'dist',
+    sourcemap: false,
+  },
+});
+</file>
+
+</files>

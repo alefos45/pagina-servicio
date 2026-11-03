@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { scroll-behavior: smooth; @apply antialiased; }
+  body { @apply bg-cream font-sans text-ink; }
+  ::selection { @apply bg-saffron/40 text-ink; }
+  h1, h2, h3, h4 { @apply font-display tracking-tight; }
+  *:focus-visible { @apply outline-none ring-2 ring-terracotta/50 ring-offset-2 ring-offset-cream; }
+}
+
+@layer components {
+  .card { @apply rounded-2xl border border-border bg-paper shadow-card; }
+  .eyebrow { @apply text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-muted; }
+  .btn-primary { @apply inline-flex items-center justify-center gap-2 rounded-xl bg-terracotta px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-terracotta-hover disabled:cursor-not-allowed disabled:opacity-40; }
+  .btn-ghost { @apply inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-paper px-5 py-2.5 text-sm font-semibold text-ink transition hover:bg-paper-2; }
+  .pill { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium; }
+  .rich { @apply text-sm leading-7 text-ink/80; }
+  .rich p { @apply mb-3 last:mb-0; }
+  .rich ul { @apply mb-3 list-disc space-y-1 pl-5 last:mb-0; }
+  .rich ol { @apply mb-3 list-decimal space-y-1 pl-5 last:mb-0; }
+  .rich h3, .rich h4 { @apply mb-2 mt-4 font-semibold text-ink first:mt-0; }
+  .rich strong { @apply font-semibold text-ink; }
+  .rich blockquote { @apply mb-3 border-l-2 border-terracotta pl-4 italic text-ink-muted; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
