@@ -1,3 +1,5 @@
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChefHat, Lock, Loader2, Send, Sparkles, X } from 'lucide-react';
@@ -10,6 +12,7 @@ import { Badge } from '../../components/ui/Badge';
 interface MenuItem {
   id: string;
   name: string;
+  category?: string;
   description: string | null;
   allergens: string[];
   recipe: Json | null;
@@ -86,7 +89,6 @@ export function Trainer() {
       setMessages((p) => [...p, { role: 'assistant', content: reply }]);
     } catch (err: any) {
       console.error("Error real del chat:", err);
-      // 🔥 AQUÍ ESTÁ EL CAMBIO: Mostramos el mensaje real del error
       setError(err.message || 'El Capacitador no responde. Intenta de nuevo.');
     } finally {
       setLoading(false);
@@ -115,9 +117,34 @@ export function Trainer() {
           <div className="flex-1 space-y-3 overflow-y-auto p-5">
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <p className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm leading-6 ${
-                  m.role === 'user' ? 'bg-forest text-cream' : 'bg-paper-2 text-ink'
-                }`}>{m.content}</p>
+                <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6 ${
+                  m.role === 'user' ? 'bg-forest text-cream whitespace-pre-wrap' : 'bg-paper-2 text-ink'
+                }`}>
+                  {m.role === 'user' ? (
+                    m.content
+                  ) : (
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        table: ({node, ...props}) => (
+                          <div className="overflow-x-auto my-3 rounded-lg border border-border shadow-sm">
+                            <table className="min-w-full divide-y divide-border" {...props} />
+                          </div>
+                        ),
+                        thead: ({node, ...props}) => <thead className="bg-paper" {...props} />,
+                        th: ({node, ...props}) => <th className="px-3 py-2 text-left text-xs font-semibold text-ink-muted uppercase tracking-wider" {...props} />,
+                        tbody: ({node, ...props}) => <tbody className="divide-y divide-border bg-white" {...props} />,
+                        td: ({node, ...props}) => <td className="px-3 py-2 text-sm text-ink" {...props} />,
+                        ul: ({node, ...props}) => <ul className="list-disc pl-5 my-1 space-y-1" {...props} />,
+                        ol: ({node, ...props}) => <ol className="list-decimal pl-5 my-1 space-y-1" {...props} />,
+                        p: ({node, ...props}) => <p className="mb-2 last:mb-0" {...props} />,
+                        strong: ({node, ...props}) => <strong className="font-semibold" {...props} />
+                      }}
+                    >
+                      {m.content}
+                    </ReactMarkdown>
+                  )}
+                </div>
               </div>
             ))}
             {loading && (
@@ -172,7 +199,7 @@ export function Trainer() {
                 className="block w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-paper-2">
                 <p className="font-medium">{m.name}</p>
                 <div className="mt-1 flex flex-wrap gap-1">
-                  {m.allergens.length > 0
+                  {m.allergens && m.allergens.length > 0
                     ? m.allergens.map((a) => <Badge key={a} tone="saffron">{a}</Badge>)
                     : <Badge tone="sage">sin alérgenos</Badge>}
                   {withRecipe && m.recipe && <Badge tone="terracotta">receta</Badge>}

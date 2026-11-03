@@ -8,11 +8,13 @@ export async function onRequestPost(context) {
     const menu = requestBody.menu || [];
     const messages = requestBody.messages || [];
 
-    // 1. Formatear la carta (Manejo de nulos seguro)
+    // 1. Formatear la carta (Manejo de nulos seguro e inclusión de categoría)
     const menuText = menu.map(item => {
-      const allergens = (item.allergens && Array.isArray(item.allergens)) ? item.allergens.join(', ') : 'Ninguno';
+      const allergens = (item.allergens && Array.isArray(item.allergens) && item.allergens.length > 0) 
+        ? item.allergens.join(', ') 
+        : 'Ninguno';
       const recipeData = item.recipe ? JSON.stringify(item.recipe) : "Sin receta técnica.";
-      return `- ${item.name || 'Plato'} | Desc: ${item.description || 'Sin descripción'} | Alérgenos: ${allergens} | Receta: ${recipeData}`;
+      return `- [${item.category || 'General'}] ${item.name || 'Plato'} | Desc: ${item.description || 'Sin descripción'} | Alérgenos: ${allergens} | Receta: ${recipeData}`;
     }).join('\n');
 
     // 2. El Prompt
@@ -23,8 +25,12 @@ ${menuText}
 
 REGLAS:
 1. Si es "empleado" o "mesero": Da ingredientes enumerados, alérgenos exactos y maridajes. Prohibido dar gramajes o tiempos.
-2. Si es "chef" o "admin": Da la tabla de receta.
-Responde de forma concisa.`;
+2. Si es "chef" o "admin": Da la tabla de receta completa (gramajes, tiempos, etc.).
+3. FORMATO VISUAL ESTRICTO:
+   - Usa tablas en Markdown estándar (con | y -). 
+   - NO uses etiquetas HTML como <br>. Para separar ingredientes en una tabla, usa comas o viñetas cortas.
+   - Usa negritas para resaltar nombres de platos o alérgenos.
+Responde de forma concisa y elegante.`;
 
     const groqMessages = [{ role: "system", content: systemPrompt }, ...messages];
 
@@ -38,16 +44,15 @@ Responde de forma concisa.`;
       body: JSON.stringify({
         model: "openai/gpt-oss-20b",
         messages: groqMessages,
-        temperature: 0.5,
+        temperature: 0.3, // Temperatura baja para respuestas precisas y bien formateadas
       }),
     });
 
-    // 🔥 CAPTURAMOS EL ERROR REAL DE GROQ
+    // CAPTURAMOS EL ERROR REAL DE GROQ
     if (!response.ok) {
       const errorData = await response.text();
       console.error(`❌ Groq falló (Status ${response.status}):`, errorData);
       
-      // Si Groq dice que estamos yendo muy rápido (Rate Limit)
       if (response.status === 429) {
         throw new Error("El Capacitador está recibiendo muchas preguntas seguidas. Espera 10 segundos y vuelve a intentar.");
       }
@@ -62,7 +67,6 @@ Responde de forma concisa.`;
 
   } catch (error) {
     console.error("❌ ERROR EN EL BACKEND:", error.message);
-    // Esto enviará el error exacto a la pantalla
     return new Response(JSON.stringify({ error: error.message }), { 
       status: 500, 
       headers: { "Content-Type": "application/json" } 
