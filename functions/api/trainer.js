@@ -8,39 +8,25 @@ export async function onRequestPost(context) {
     const menu = requestBody.menu || [];
     const messages = requestBody.messages || [];
 
-    // 1. Formatear la carta
+    // 1. Formatear la carta (Manejo de nulos seguro)
     const menuText = menu.map(item => {
-      const allergens = (item.allergens && item.allergens.length > 0) ? item.allergens.join(', ') : 'Ninguno declarado';
-      const recipeData = item.recipe ? JSON.stringify(item.recipe) : "Sin receta técnica asignada aún.";
-      return `- ${item.name} | Descripción: ${item.description || 'Sin descripción'} | Alérgenos: ${allergens} | Receta: ${recipeData}`;
+      const allergens = (item.allergens && Array.isArray(item.allergens)) ? item.allergens.join(', ') : 'Ninguno';
+      const recipeData = item.recipe ? JSON.stringify(item.recipe) : "Sin receta técnica.";
+      return `- ${item.name || 'Plato'} | Desc: ${item.description || 'Sin descripción'} | Alérgenos: ${allergens} | Receta: ${recipeData}`;
     }).join('\n');
 
-    // 2. El Prompt (Cerebro)
+    // 2. El Prompt
     const systemPrompt = `Eres el Capacitador IA de La Tierrita del Berriondo.
 El rol del usuario es: "${role}".
-Aquí está la carta actual con la que debes trabajar:
+Carta actual:
 ${menuText}
 
-REGLAS DE COMPORTAMIENTO:
+REGLAS:
+1. Si es "empleado" o "mesero": Da ingredientes enumerados, alérgenos exactos y maridajes. Prohibido dar gramajes o tiempos.
+2. Si es "chef" o "admin": Da la tabla de receta.
+Responde de forma concisa.`;
 
-1. SI EL ROL ES "EMPLEADO", "MESERO" O "SALA":
-   - Tu objetivo es ayudarles a vender y advertir al cliente.
-   - SI TE PIDEN INGREDIENTES: Deduce los ingredientes basándote en el nombre y la descripción del plato. Preséntalos en una lista enumerada. (Ej: "El cocido lleva: 1. Cerdo, 2. Cubios...").
-   - SI TE PIDEN MARIDAJES: Recomienda vinos, cervezas o cocteles que combinen bien con el plato (usa tu conocimiento gastronómico general).
-   - SI TE PIDEN ALÉRGENOS: Diles EXACTAMENTE lo que dice la columna de alérgenos de la carta. Si dice "Ninguno", indícales que no tiene alérgenos declarados, pero que siempre se debe advertir sobre contacto cruzado.
-   - TIENES PROHIBIDO dar: gramajes, tiempos de cocción, pasos de cocina. Si te preguntan, di: "Esa información es exclusiva del personal de cocina".
-
-2. SI EL ROL ES "CHEF", "COCINERO" O "ADMIN":
-   - SÍ PUEDES dar recetas.
-   - Si te piden la receta de un plato y en la carta dice "Sin receta técnica asignada aún", diles: "Aún no has cargado los gramajes y tiempos de este plato en el sistema".
-   - Si la receta sí existe en los datos, muéstrala en una tabla Markdown con: Producto, Clase, Gramaje/Unidad, Tiempo de Cocción y Tiempo de Emplatado.
-
-Responde siempre de forma amable, profesional y concisa.`;
-
-    const groqMessages = [
-      { role: "system", content: systemPrompt },
-      ...messages
-    ];
+    const groqMessages = [{ role: "system", content: systemPrompt }, ...messages];
 
     // 3. Llamar a Groq
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -56,9 +42,16 @@ Responde siempre de forma amable, profesional y concisa.`;
       }),
     });
 
+    // 🔥 CAPTURAMOS EL ERROR REAL DE GROQ
     if (!response.ok) {
       const errorData = await response.text();
-      throw new Error(`Groq falló: ${errorData}`);
+      console.error(`❌ Groq falló (Status ${response.status}):`, errorData);
+      
+      // Si Groq dice que estamos yendo muy rápido (Rate Limit)
+      if (response.status === 429) {
+        throw new Error("El Capacitador está recibiendo muchas preguntas seguidas. Espera 10 segundos y vuelve a intentar.");
+      }
+      throw new Error(`Error de Groq (${response.status}). Revisa la consola.`);
     }
 
     const data = await response.json();
@@ -69,7 +62,8 @@ Responde siempre de forma amable, profesional y concisa.`;
 
   } catch (error) {
     console.error("❌ ERROR EN EL BACKEND:", error.message);
-    return new Response(JSON.stringify({ error: "Error en el servidor", detalle: error.message }), { 
+    // Esto enviará el error exacto a la pantalla
+    return new Response(JSON.stringify({ error: error.message }), { 
       status: 500, 
       headers: { "Content-Type": "application/json" } 
     });
