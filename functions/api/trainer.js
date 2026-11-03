@@ -8,7 +8,7 @@ export async function onRequestPost(context) {
     const menu = requestBody.menu || [];
     const messages = requestBody.messages || [];
 
-    // 1. Formatear la carta (Manejo de nulos seguro e inclusión de categoría)
+    // 1. Formatear la carta
     const menuText = menu.map(item => {
       const allergens = (item.allergens && Array.isArray(item.allergens) && item.allergens.length > 0) 
         ? item.allergens.join(', ') 
@@ -17,19 +17,38 @@ export async function onRequestPost(context) {
       return `- [${item.category || 'General'}] ${item.name || 'Plato'} | Desc: ${item.description || 'Sin descripción'} | Alérgenos: ${allergens} | Receta: ${recipeData}`;
     }).join('\n');
 
-    // 2. El Prompt
+    // 2. El Prompt (Con reglas estrictas de formato)
     const systemPrompt = `Eres el Capacitador IA de La Tierrita del Berriondo.
 El rol del usuario es: "${role}".
 Carta actual:
 ${menuText}
 
-REGLAS:
-1. Si es "empleado" o "mesero": Da ingredientes enumerados, alérgenos exactos y maridajes. Prohibido dar gramajes o tiempos.
-2. Si es "chef" o "admin": Da la tabla de receta completa (gramajes, tiempos, etc.).
-3. FORMATO VISUAL ESTRICTO:
-   - Usa tablas en Markdown estándar (con | y -). 
-   - NO uses etiquetas HTML como <br>. Para separar ingredientes en una tabla, usa comas o viñetas cortas.
-   - Usa negritas para resaltar nombres de platos o alérgenos.
+REGLAS ESTRICTAS DE COMPORTAMIENTO:
+
+SI EL ROL ES "EMPLEADO", "MESERO" O "SALA":
+Cuando te pidan explicar un plato, DEBES responder SIEMPRE usando una tabla en Markdown con EXACTAMENTE estas 4 columnas:
+| Plato | Ingredientes (incluye acompañamientos) | Alérgenos | Maridaje Recomendado |
+- **Plato**: El nombre del plato consultado.
+- **Ingredientes**: Lista los ingredientes del plato Y SUS ACOMPAÑAMIENTOS (ej. papa criolla, arroz, aguacate) separados por comas. NO hagas una fila por cada ingrediente.
+- **Alérgenos**: Los alérgenos del plato completo.
+- **Maridaje**: Da UNA recomendación (vino, cerveza, etc.) que combine con el plato completo en general. NO des un maridaje por cada ingrediente.
+- **Tip**: Debajo de la tabla, agrega un "Tip:" breve ofreciendo alternativas para clientes con alergias (ej. sustituir lácteos o gluten).
+- PROHIBIDO dar gramajes o tiempos de cocción.
+
+SI EL ROL ES "CHEF", "COCINERO" O "ADMIN":
+- Da la tabla de receta completa (gramajes, tiempos, emplatado) basándote en el JSON de la receta.
+
+REGLAS DE FORMATO VISUAL:
+- Usa tablas en Markdown estándar (con | y -). 
+- NO uses etiquetas HTML como <br>. Usa comas o viñetas cortas.
+- Usa negritas para resaltar nombres de platos o alérgenos.
+
+EJEMPLO DE RESPUESTA PARA MESERO (Úsalo como plantilla):
+| Plato | Ingredientes (incluye acompañamientos) | Alérgenos | Maridaje Recomendado |
+|---|---|---|---|
+| Chicharrón Toteado | Chicharrón de cerdo, papa criolla, sal y especias | Ninguno | Vino tinto robusto (Malbec) o Cerveza Lager |
+**Tip**: Si el cliente no come cerdo, se puede ofrecer chicharrón de pollo.
+
 Responde de forma concisa y elegante.`;
 
     const groqMessages = [{ role: "system", content: systemPrompt }, ...messages];
@@ -44,19 +63,17 @@ Responde de forma concisa y elegante.`;
       body: JSON.stringify({
         model: "openai/gpt-oss-20b",
         messages: groqMessages,
-        temperature: 0.3, // Temperatura baja para respuestas precisas y bien formateadas
+        temperature: 0.2, // Temperatura baja para que sea muy estricto con las reglas
       }),
     });
 
-    // CAPTURAMOS EL ERROR REAL DE GROQ
     if (!response.ok) {
       const errorData = await response.text();
       console.error(`❌ Groq falló (Status ${response.status}):`, errorData);
-      
       if (response.status === 429) {
-        throw new Error("El Capacitador está recibiendo muchas preguntas seguidas. Espera 10 segundos y vuelve a intentar.");
+        throw new Error("El Capacitador está recibiendo muchas preguntas seguidas. Espera 10 segundos.");
       }
-      throw new Error(`Error de Groq (${response.status}). Revisa la consola.`);
+      throw new Error(`Error de Groq (${response.status}).`);
     }
 
     const data = await response.json();
